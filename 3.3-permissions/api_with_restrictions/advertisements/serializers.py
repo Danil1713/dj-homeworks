@@ -1,45 +1,66 @@
 from django.contrib.auth.models import User
 from rest_framework import serializers
 
-from advertisements.models import Advertisement
+from .models import Advertisement, AdvertisementStatusChoices
 
 
 class UserSerializer(serializers.ModelSerializer):
-    """Serializer для пользователя."""
-
     class Meta:
         model = User
-        fields = ('id', 'username', 'first_name',
-                  'last_name',)
+        fields = [
+            'id',
+            'username',
+            'first_name',
+            'last_name',
+        ]
 
 
 class AdvertisementSerializer(serializers.ModelSerializer):
-    """Serializer для объявления."""
-
-    creator = UserSerializer(
-        read_only=True,
-    )
+    creator = UserSerializer(read_only=True)
 
     class Meta:
         model = Advertisement
-        fields = ('id', 'title', 'description', 'creator',
-                  'status', 'created_at', )
+        fields = [
+            'id',
+            'title',
+            'description',
+            'creator',
+            'status',
+            'created_at',
+        ]
+        read_only_fields = ['id', 'created_at']
 
     def create(self, validated_data):
-        """Метод для создания"""
-
-        # Простановка значения поля создатель по-умолчанию.
-        # Текущий пользователь является создателем объявления
-        # изменить или переопределить его через API нельзя.
-        # обратите внимание на `context` – он выставляется автоматически
-        # через методы ViewSet.
-        # само поле при этом объявляется как `read_only=True`
-        validated_data["creator"] = self.context["request"].user
+        validated_data['creator'] = self.context['request'].user
         return super().create(validated_data)
 
     def validate(self, data):
-        """Метод для валидации. Вызывается при создании и обновлении."""
+        if self.instance is None:
+            creator = self.context['request'].user
+            current_status = AdvertisementStatusChoices.OPEN
+        else:
+            creator = self.instance.creator
+            current_status = self.instance.status
 
-        # TODO: добавьте требуемую валидацию
+        target_status = data.get('status', current_status)
+
+        if target_status == AdvertisementStatusChoices.OPEN:
+            open_advertisements = Advertisement.objects.filter(
+                creator=creator,
+                status=AdvertisementStatusChoices.OPEN,
+            )
+
+            if self.instance is not None:
+                open_advertisements = open_advertisements.exclude(
+                    pk=self.instance.pk,
+                )
+
+            if open_advertisements.count() >= 10:
+                raise serializers.ValidationError({
+                    'status': (
+                        'У пользователя не может быть больше '
+                        '10 открытых объявлений.'
+                    ),
+                })
 
         return data
